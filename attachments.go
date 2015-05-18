@@ -1,15 +1,101 @@
 package libmail
 
 import (
+	"errors"
 	"io"
+	"mime"
+	"net/http"
 	"os"
+	"path"
+	"sync"
+)
+
+var (
+	once sync.Once
+)
+
+type AttachmentFileKind string
+type AttachmentContentDisposition string
+
+const (
+	Bytes      = AttachmentFileKind("bytes")
+	Path       = AttachmentFileKind("path")
+	Inline     = AttachmentContentDisposition("inline")
+	Attachment = AttachmentContentDisposition("attachment")
 )
 
 type AttachmentInfo struct {
-	File     io.ReadCloser
-	Name     string
-	MimeType string
-	Path     string // optional path in disk
+	StreamKind         AttachmentFileKind
+	Bytes              []byte
+	Name               string
+	MimeType           string
+	Path               string // path in disk
+	ContentDisposition AttachmentContentDisposition
+}
+
+func initMIME() {
+	//TODO: add more mime types than go has
+}
+
+func guessMIME(ai *AttachmentInfo) {
+	once.Do(initMIME)
+	if len(ai.MimeType) > 0 {
+		return
+	}
+	if ai.StreamKind == Path {
+		ext := path.Ext(ai.Path)
+		mt := mime.TypeByExtension(ext)
+		ai.MimeType = mt
+		if len(mt) > 0 {
+			return
+		}
+	}
+	stream, err := ai.GetStream()
+	if err != nil {
+		return
+	}
+	defer stream.Close()
+	bs := make([]byte, 512)
+	stream.Read(bs)
+	ai.MimeType = http.DetectContentType(bs)
+}
+
+func NewAttachmentBytes(bs []byte, name string, mime string) (f *AttachmentInfo) {
+	f = &AttachmentInfo{}
+	f.ContentDisposition = Attachment
+	f.Name = name
+	f.Bytes = bs
+	f.StreamKind = Bytes
+	f.MimeType = mime
+	guessMIME(f)
+	return f
+}
+
+func NewAttachmentPath(path string, name string, mime string) (f *AttachmentInfo) {
+	f = &AttachmentInfo{}
+	f.ContentDisposition = Attachment
+	f.Name = name
+	f.Path = path
+	f.StreamKind = Path
+	f.MimeType = mime
+	guessMIME(f)
+	return f
+}
+
+//TODO: add inline attachments
+
+func (a *AttachmentInfo) GetStream() (io.ReadCloser, error) {
+	switch a.StreamKind {
+	case Bytes:
+		if a.Bytes == nil {
+			return nil, errors.New("bytes are nil")
+		}
+		return NewReadCloserBuffer(a.Bytes), nil
+	case Path:
+		f, err := os.Open(a.Path)
+		return f, err
+	}
+	return nil, errors.New("invalid stream kind")
 }
 
 func NewAttachmentList() *AttachmentList {
@@ -57,19 +143,6 @@ func (l *AttachmentList) GetFilenames() []string {
 		names = append(names, li.Value.Name)
 	}
 	return names
-}
-
-func (l *AttachmentList) PurgeFiles() {
-	for li := l.First(); li != nil; li = li.Next() {
-		if len(li.Value.Path) > 0 {
-			os.Remove(li.Value.Path)
-			li.Value.Path = ""
-		}
-		if li.Value.File != nil {
-			li.Value.File.Close()
-			li.Value.File = nil
-		}
-	}
 }
 
 type AttachmentListItem struct {

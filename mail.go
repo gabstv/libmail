@@ -11,7 +11,6 @@ import (
 	"log"
 	"net/mail"
 	"net/smtp"
-	"os"
 )
 
 var (
@@ -96,6 +95,17 @@ func (s *SMTP) SubmitMessage(msg *Message) error {
 }
 
 func (s *SMTP) submit(msg *Message) (int, error) {
+	streams := make([]io.ReadCloser, 0, 512)
+
+	// function to close all the streams on exit
+	defer func() {
+		for k := range streams {
+			if streams[k] != nil {
+				streams[k].Close()
+			}
+		}
+	}()
+
 	//var buffer bytes.Buffer
 	bmarker := newBoundary()
 	multipartmessage := message.NewMultipartMessage("mixed", bmarker)
@@ -163,11 +173,12 @@ func (s *SMTP) submit(msg *Message) (int, error) {
 	}
 
 	for curItem := msg.Files.First(); curItem != nil; curItem = curItem.Next() {
-		if len(curItem.Value.Path) > 0 && curItem.Value.File == nil {
-			curItem.Value.File, _ = os.Open(curItem.Value.Path)
-			//TODO: deal with this error
+		stream, err := curItem.Value.GetStream()
+		if err != nil {
+			return 0, err
 		}
-		msg00 := message.NewBinaryMessage(curItem.Value.File)
+		streams = append(streams, stream)
+		msg00 := message.NewBinaryMessage(stream)
 		msg00.SetHeader("Content-Type", fmt.Sprintf("%v; name=\"%v\"", curItem.Value.MimeType, message.EncodeWord(curItem.Value.Name)))
 		msg00.SetHeader("Content-Disposition", fmt.Sprintf("attachment; filename=\"%v\"", message.EncodeWord(curItem.Value.Name)))
 		multipartmessage.AddPart(msg00)
@@ -187,5 +198,5 @@ Submit:
 	if len(msg.RawHeaders["Sender"]) > 0 {
 		snd = msg.RawHeaders["Sender"]
 	}
-	return 1024 * 1024, smtpstream.SendMail(s.Address, s.Auth, snd, tols, rrdr, s.TLS)
+	return smtpstream.SendMail(s.Address, s.Auth, snd, tols, rrdr, s.TLS)
 }
