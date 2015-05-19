@@ -3,6 +3,7 @@ package libmail
 import (
 	"errors"
 	"io"
+	"io/ioutil"
 	"mime"
 	"net/http"
 	"os"
@@ -110,6 +111,27 @@ type AttachmentList struct {
 	last  *AttachmentListItem
 }
 
+type SerializedAttachmentList struct {
+	Files []SerializedFile
+}
+
+type SerializedFile struct {
+	Content            []byte
+	Name               string
+	MimeType           string
+	ContentDisposition AttachmentContentDisposition
+}
+
+func (l *SerializedAttachmentList) Unserialize() *AttachmentList {
+	out := NewAttachmentList()
+	for _, v := range l.Files {
+		fil := NewAttachmentBytes(v.Content, v.Name, v.MimeType)
+		fil.ContentDisposition = v.ContentDisposition
+		out.Add(fil)
+	}
+	return out
+}
+
 func (l *AttachmentList) Add(item *AttachmentInfo) {
 	ni := &AttachmentListItem{}
 	ni.Value = item
@@ -143,6 +165,30 @@ func (l *AttachmentList) GetFilenames() []string {
 		names = append(names, li.Value.Name)
 	}
 	return names
+}
+
+func (l *AttachmentList) Serialize() (*SerializedAttachmentList, error) {
+	var err error
+	out := &SerializedAttachmentList{}
+	out.Files = make([]SerializedFile, l.Count())
+	i := 0
+	for li := l.First(); li != nil; li = li.Next() {
+		stream, e2 := li.Value.GetStream()
+		if e2 != nil {
+			return nil, e2
+		}
+		out.Files[i].Content, err = ioutil.ReadAll(stream)
+		if err != nil {
+			return nil, err
+		}
+		stream.Close()
+		out.Files[i].Name = li.Value.Name
+		out.Files[i].ContentDisposition = li.Value.ContentDisposition
+		out.Files[i].MimeType = li.Value.MimeType
+		//
+		i++
+	}
+	return out, nil
 }
 
 type AttachmentListItem struct {
