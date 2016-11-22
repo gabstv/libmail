@@ -35,7 +35,7 @@ func sendMail(addr string, a smtp.Auth, from string, to []string, msg io.Reader,
 		return 0, err
 	}
 	if ok, _ := c.Extension("STARTTLS"); ok {
-		if err = c.StartTLS(nil); err != nil {
+		if err = c.StartTLS(&tls.Config{InsecureSkipVerify: true}); err != nil {
 			return 0, err
 		}
 	}
